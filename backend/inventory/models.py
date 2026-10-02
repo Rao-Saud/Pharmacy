@@ -16,7 +16,7 @@ class Category(models.Model):
         return self.name
 
 class Medicine(models.Model):
-    category = models.ForeignKey(Category, on_delete=models.CASCADE)
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='medicines')
     name = models.CharField(max_length=255)
     generic_name = models.CharField(max_length=255)
     manufacturer = models.CharField(max_length=255, blank=True, null=True)
@@ -37,7 +37,7 @@ class Medicine(models.Model):
         return self.name
 
 class Batch(models.Model):
-    medicine = models.ForeignKey(Medicine, on_delete=models.CASCADE)
+    medicine = models.ForeignKey(Medicine, on_delete=models.CASCADE, related_name='batches')
     batch_number = models.CharField(max_length=255, db_index=True)
     expiry_date = models.DateField()
     quantity_remaining = models.PositiveIntegerField()

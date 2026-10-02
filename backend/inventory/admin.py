@@ -17,6 +17,7 @@ class MedicineAdmin(admin.ModelAdmin):
     search_fields = ('name',)
 
     def get_inlines(self, request, obj=None):
+        # Only show the BatchInLine if the Medicine object already exists. In other words, when creating a new Medicine, the inline will not be displayed.
         if obj is None:
             return []
         return [BatchInLine]
