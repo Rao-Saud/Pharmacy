@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import FORM_CHOICES, Medicine, Batch, Category
+from .models import FORM_CHOICES, Medicine, Batch, Category, Patient
 
 class MedicineSerializer(serializers.ModelSerializer):
     total_stock = serializers.SerializerMethodField()
@@ -65,4 +65,9 @@ class BatchSerializer(serializers.ModelSerializer):
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
+        fields = '__all__'
+
+class PatientSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Patient
         fields = '__all__'

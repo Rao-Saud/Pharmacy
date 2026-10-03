@@ -2,8 +2,8 @@ from django.shortcuts import render
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from django.db.models import F, Sum
 from django.db.models.functions import Coalesce
-from .models import Medicine, Batch, Category
-from .serializers import MedicineSerializer, BatchSerializer, CategorySerializer
+from .models import Medicine, Batch, Category, Patient
+from .serializers import MedicineSerializer, BatchSerializer, CategorySerializer, PatientSerializer
 from rest_framework.permissions import IsAuthenticated
 from accounts.permissions import IsPharmacist, IsAdmin
 
@@ -60,6 +60,8 @@ class ExpiringSoonView(ReadOnlyModelViewSet):
     def get_queryset(self):
         from django.utils.timezone import now
         from datetime import timedelta
+        # Determine the number of days to look ahead for expiring batches.
+        # If the 'days' query parameter is provided, use it; otherwise, default to 30 days.
         if self.request.query_params.get('days'):
             days = int(self.request.query_params.get('days'))
         else:
@@ -70,7 +72,15 @@ class ExpiringSoonView(ReadOnlyModelViewSet):
             expiry_date__lte=soon_date
         )
 
-        # soon_date = now() + timedelta(days=30)
-        # return Batch.objects.select_related('medicine__category').filter(
-        #     expiry_date__lte=soon_date
-        # )
+class PatientViewSet(ModelViewSet):
+    queryset = Patient.objects.all()
+    serializer_class = PatientSerializer
+    ordering_fields = ['created_at']
+    search_fields = ['name', 'contact_number']
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            permission_classes = [IsAdmin | IsPharmacist]
+        else:
+            permission_classes = []
+        return [permission() for permission in permission_classes]

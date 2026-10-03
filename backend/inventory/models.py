@@ -1,4 +1,7 @@
 from django.db import models
+from django.core.validators import RegexValidator
+from django.core.exceptions import ValidationError
+import re
 
 FORM_CHOICES = [
     ('tablet', 'Tablet'),
@@ -53,3 +56,44 @@ class Batch(models.Model):
 
     def __str__(self):
         return f"{self.medicine.name} - {self.batch_number}"
+
+class Patient(models.Model):
+    phone_regex = RegexValidator(
+        regex=r'^(?:\+92|0092|92|0)?(?:3[0-7]\d{1})\s?-?\d{7}$',
+    )
+
+    name = models.CharField(max_length=255)
+    date_of_birth = models.DateField(blank=True, null=True)
+    contact_number = models.CharField(max_length=14, blank=True, null=True, db_index=True, validators=[phone_regex], help_text="'03XXXXXXXXX' or '+923XXXXXXXXX'")
+    address = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Custom clean method to validate and normalize the contact number. (Ensures it follows the required format and converts it to the standard '+92XXXXXXXXX' format.)
+    def clean(self):
+        super().clean()
+        if self.contact_number:
+            num = self.contact_number.strip()
+            match = re.match(r'^(?:\+92|0092|92|0)?((?:3[0-7]\d{1})\d{7})$', num)
+
+            if match:
+                core_number = match.group(1)
+                self.contact_number = f'+92{core_number}'
+            else:
+                raise ValidationError({
+                    'contact_number': "Phone number must be entered in the format: '+923XXXXXXXXX' or '03XXXXXXXXX'."
+                })
+
+    def save(self, *args, **kwargs):
+        self.full_clean()  # This will call the clean() method before saving
+        super().save(*args, **kwargs)
+            
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['name', 'contact_number'], 
+                name='unique_patient')
+        ]
