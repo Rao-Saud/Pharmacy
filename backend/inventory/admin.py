@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Category, Medicine, Batch, Patient
+from .models import Category, Medicine, Batch, Patient, Prescription, PrescriptionItem
 
 class BatchInLine(admin.TabularInline):
     model = Batch
@@ -32,3 +32,25 @@ class BatchAdmin(admin.ModelAdmin):
 class PatientAdmin(admin.ModelAdmin):
     list_display = ('name', 'contact_number', 'created_at')
     search_fields = ('name', 'contact_number')
+
+class PrescriptionItemInLine(admin.TabularInline):
+    model = PrescriptionItem
+    fields = ('medicine', 'quantity', 'dosage_instructions')
+    extra = 1
+
+@admin.register(Prescription)
+class PrescriptionAdmin(admin.ModelAdmin):
+    list_display = ('patient', 'date_issued', 'status')
+    list_filter = ('status',)
+    search_fields = ('patient__name', 'doctor_name')
+
+    def get_inlines(self, request, obj=None):
+        # Only show the PrescriptionInLine if the Prescription object already exists. In other words, when creating a new Prescription, the inline will not be displayed.
+        if obj is None:
+            return []
+        return [PrescriptionItemInLine]
+
+@admin.register(PrescriptionItem)
+class PrescriptionItemAdmin(admin.ModelAdmin):
+    list_display = ('prescription', 'medicine', 'quantity')
+    

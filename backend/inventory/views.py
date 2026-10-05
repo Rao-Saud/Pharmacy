@@ -2,10 +2,13 @@ from django.shortcuts import render
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from django.db.models import F, Sum
 from django.db.models.functions import Coalesce
-from .models import Medicine, Batch, Category, Patient
-from .serializers import MedicineSerializer, BatchSerializer, CategorySerializer, PatientSerializer
+from .models import Medicine, Batch, Category, Patient, Prescription, PrescriptionItem
+from .serializers import MedicineSerializer, BatchSerializer, CategorySerializer, PatientSerializer, PharmacistReassignSerializer, PrescriptionSerializer, PrescriptionDispensedSerializer
 from rest_framework.permissions import IsAuthenticated
 from accounts.permissions import IsPharmacist, IsAdmin
+from rest_framework.generics import UpdateAPIView
+from rest_framework.response import Response
+from rest_framework import status
 
 # Create your views here.
 
@@ -84,3 +87,55 @@ class PatientViewSet(ModelViewSet):
         else:
             permission_classes = []
         return [permission() for permission in permission_classes]
+
+class PrescriptionViewSet(ModelViewSet):
+    queryset = Prescription.objects.select_related('patient', 'pharmacist').prefetch_related('prescriptionitem_set__medicine').all()
+    serializer_class = PrescriptionSerializer
+    permission_classes = [IsAdmin | IsPharmacist]
+    ordering_fields = ['created_at']
+    search_fields = ['patient__name']
+    filterset_fields = ['status']
+
+    # The following block of code ensures that a warning is generated for any prescription items that do not require a prescription.
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        prescription = serializer.save()
+
+        warnings = self._check_item_warnings(prescription)
+
+        response_data = serializer.data
+        if warnings:
+            response_data['warnings'] = warnings
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(response_data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+    def _check_item_warnings(self, prescription):
+        warnings = []
+        for item in prescription.prescriptionitem_set.select_related('medicine'):
+            if not item.medicine.prescription_required:
+                warnings.append(f"{item.medicine.name} does not require a prescription.")
+        return warnings
+
+class PrescriptionDispensedView(UpdateAPIView):
+    queryset = Prescription.objects.all()
+    serializer_class = PrescriptionDispensedSerializer
+    permission_classes = [IsAdmin | IsPharmacist]
+    http_method_names = ['patch'] # Strict enforcement of partial updates
+
+
+    def perform_update(self, serializer):
+        # This triggers the custom update method inside your serializer
+        serializer.save()
+
+class PharmacistReassignView(UpdateAPIView):
+    queryset = Prescription.objects.all()
+    serializer_class = PharmacistReassignSerializer
+    permission_classes = [IsAdmin]
+    http_method_names = ['patch'] # Strict enforcement of partial updates
+
+    def perform_update(self, serializer):
+        # This triggers the custom update method inside your serializer
+        serializer.save()

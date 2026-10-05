@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from .models import CustomUser
 from .serializers import CustomUserSerializer
 from rest_framework.response import Response
-from .permissions import IsAdmin, IsPharmacist, IsCashier, IsCustomer, IsAdminOrUser
+from .permissions import IsAdmin, IsAdminOrUser
 
 # Create your views here.
 class CustomUserListView(APIView):
@@ -19,6 +19,7 @@ class CustomUserListView(APIView):
             users = CustomUser.objects.filter(id=request.user.id)
             serializer = CustomUserSerializer(users, many=True)
             return Response(serializer.data)
+        
 
     def post(self, request):
         if request.user.role == 'admin' and request.user.is_superuser:
