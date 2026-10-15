@@ -1,7 +1,11 @@
 from rest_framework import serializers
-from .models import FORM_CHOICES, Medicine, Batch, Category, Patient, Prescription, PrescriptionItem
+from .models import (FORM_CHOICES, Medicine, Batch, Category, Patient, Prescription, 
+                    PrescriptionItem, Purchase, Supplier, PurchaseItem)
 from django.db import transaction
 from accounts.models import CustomUser, RoleChoices
+from django.utils import timezone
+from decimal import Decimal
+from .services import receive_purchase, PurchaseError
 
 class MedicineSerializer(serializers.ModelSerializer):
     total_stock = serializers.SerializerMethodField()
@@ -173,4 +177,106 @@ class PharmacistReassignSerializer(serializers.ModelSerializer):
         instance.save(update_fields=['pharmacist'])
         return instance
 
+class SupplierSerializer(serializers.ModelSerializer):
+    active = serializers.BooleanField(default=True)
+
+    class Meta:
+        model = Supplier
+        fields = ['name', 'active', 'contact_number', 'address', 'email']
+
+    def validate_name(self, value):
+        instance = self.instance
+        queryset = Supplier.objects.filter(name__iexact=value)
+        # if updating an existing instance, exclude it from the uniqueness check
+        if instance:
+            queryset = queryset.exclude(pk=instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("A supplier with this name already exists.")
+        return value
+
+class PurchaseItemSerializer(serializers.ModelSerializer):
+    medicine = serializers.PrimaryKeyRelatedField(queryset=Medicine.objects.select_related('category').all())
+    quantity = serializers.IntegerField()
+    unit_price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    batch_number = serializers.CharField(max_length=255)
+    expiry_date = serializers.DateField()
     
+
+    def validate_quantity(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Quantity must be a positive integer.")
+        return value
+
+    def validate_unit_price(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Unit price must be a non-negative number.")
+        return value
+
+    def validate_expiry_date(self, value):
+        if value <= timezone.localdate():
+            raise serializers.ValidationError("Expiry date must be in the future.")
+        return value
+
+    class Meta:
+        model = PurchaseItem
+        fields = ['purchase', 'medicine', 'quantity', 'unit_price', 'line_total', 'batch_number', 'expiry_date', 'batch']
+        read_only_fields = ['purchase', 'line_total', 'batch']
+
+class PurchaseSerializer(serializers.ModelSerializer):
+    supplier = serializers.PrimaryKeyRelatedField(queryset=Supplier.objects.all())
+    purchase_items = PurchaseItemSerializer(many=True)
+
+    class Meta:
+        model = Purchase
+        fields = ['id', 'supplier', 'user', 'invoice_number', 'date', 'total_amount', 'status', 'created_at', 'purchase_items']
+        read_only_fields = ['id', 'user', 'status', 'created_at']
+
+    def validate_supplier(self, value):
+        if value.active is False:
+            raise serializers.ValidationError("The selected supplier is not active.")
+        return value
+
+    def validate_purchase_items(self, items):
+        if not items:
+            raise serializers.ValidationError("At least one purchase item is required.")
+
+        seen = set()
+        for item in items:
+            key = (item['medicine'].pk, item['batch_number'].strip())
+            if key in seen:
+                raise serializers.ValidationError(f"Batch {item['batch_number']} for medicine {item['medicine'].name} appears more than once.")
+            seen.add(key)
+        return items
+
+    def validate(self, attrs):
+        items = attrs.get('purchase_items', [])
+        computed_total = sum(
+            (Decimal(i["quantity"]) * i["unit_price"] for i in items),
+            Decimal("0"),
+        )
+        if 'total_amount' in attrs and attrs['total_amount'] != computed_total:
+            raise serializers.ValidationError(f"total_amount: Invoice Total {attrs['total_amount']} does not match the sum of purchase items {computed_total}.")
+        return attrs
+
+    def create(self, validated_data):
+        purchase_items = validated_data.pop('purchase_items')
+        supplier = validated_data.pop('supplier')
+        user = self.context['request'].user
+
+        try:
+            purchase = receive_purchase(
+                supplier=supplier,
+                user=user,
+                header=validated_data,
+                purchase_items=purchase_items,
+            )
+        except PurchaseError as e:
+            raise serializers.ValidationError({"detail": str(e)})
+
+        return purchase
+
+    def update(self, instance, validated_data):
+        raise serializers.ValidationError({"detail": "Purchases cannot be edited. Cancel the purchase and create a new one."})
+
+        
+        

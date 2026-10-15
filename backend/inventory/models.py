@@ -1,5 +1,6 @@
 from django.db import models
-from django.core.validators import RegexValidator
+from django.db.models.functions import Lower
+from django.core.validators import RegexValidator, MinValueValidator
 from django.core.exceptions import ValidationError
 from accounts.models import CustomUser, RoleChoices
 import re
@@ -42,7 +43,7 @@ class Medicine(models.Model):
 
 class Batch(models.Model):
     medicine = models.ForeignKey(Medicine, on_delete=models.CASCADE, related_name='batches')
-    batch_number = models.CharField(max_length=255, db_index=True)
+    batch_number = models.CharField(max_length=50, db_index=True)
     expiry_date = models.DateField()
     quantity_remaining = models.PositiveIntegerField()
     cost_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -107,7 +108,7 @@ STATUS_CHOICES = [
 ]
 
 class Prescription(models.Model):
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
+    patient = models.ForeignKey(Patient, on_delete=models.PROTECT)
     pharmacist = models.ForeignKey(CustomUser, on_delete=models.CASCADE, limit_choices_to={'role': RoleChoices.PHARMACIST}, default=1)
     doctor_name = models.CharField(max_length=255)
     date_issued = models.DateField(null=True, blank=True)
@@ -128,3 +129,82 @@ class PrescriptionItem(models.Model):
 
     def __str__(self):
         return f"{self.quantity} x {self.medicine.name} for {self.prescription.patient.name}"
+
+class Supplier(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    contact_number = models.CharField(max_length=15, null=True, blank=True, unique=True)
+    email = models.EmailField(null=True, blank=True)
+    address = models.TextField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                Lower('name'),
+                name='unique_supplier_lower'
+            )
+        ]
+
+class PurchaseStatus(models.TextChoices):
+    RECEIVED = 'received', 'Received'
+    CANCELLED = 'cancelled', 'Cancelled'
+
+class Purchase(models.Model):
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name='purchases', db_index=True)
+    user = models.ForeignKey(CustomUser, on_delete=models.PROTECT, related_name='purchases')
+    invoice_number = models.CharField(max_length=50, null=True, blank=True)
+    date = models.DateField(db_index=True)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(1)])
+    status = models.CharField(max_length=10, choices=PurchaseStatus.choices, default=PurchaseStatus.RECEIVED)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+    def __str__(self):
+        return f"Purchase from {self.supplier.name} on {self.date if self.date else 'N/A'}"
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['supplier', 'invoice_number'], 
+                name='unique_purchase')
+        ]
+        ordering = ['-date']
+
+class PurchaseItem(models.Model):
+    purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='purchase_items')
+    medicine = models.ForeignKey(Medicine, on_delete=models.PROTECT, related_name='purchase_items')
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    line_total = models.DecimalField(max_digits=12, decimal_places=2, editable=False, default=0)
+    batch_number = models.CharField(max_length=50, db_index=True)
+    expiry_date = models.DateField()
+    batch = models.ForeignKey(Batch, on_delete=models.PROTECT, null=True, blank=True, related_name='purchase_items')
+
+    def save(self, *args, **kwargs):
+        if self.unit_price and self.quantity:
+            self.line_total = self.unit_price * self.quantity
+        else:
+            self.line_total = 0
+        super().save(*args, **kwargs)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['purchase', 'medicine', 'batch_number'], 
+                name='unique_purchase_item',
+                ),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name='quantity_positive'
+            ),
+            models.CheckConstraint(
+                condition=models.Q(unit_price__gte=0),
+                name='unit_price_non_negative'
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.quantity} x {self.medicine.name} for {self.purchase.supplier.name}"

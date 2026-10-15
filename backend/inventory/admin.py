@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Category, Medicine, Batch, Patient, Prescription, PrescriptionItem
+from .models import Category, Medicine, Batch, Patient, Prescription, PrescriptionItem, Supplier, Purchase, PurchaseItem
 
 class BatchInLine(admin.TabularInline):
     model = Batch
@@ -54,3 +54,35 @@ class PrescriptionAdmin(admin.ModelAdmin):
 class PrescriptionItemAdmin(admin.ModelAdmin):
     list_display = ('prescription', 'medicine', 'quantity')
     
+@admin.register(Supplier)
+class SupplierAdmin(admin.ModelAdmin):
+    list_display = ('name', 'contact_number', 'active')
+    search_fields = ('name', 'contact_number')
+
+class PurchaseItemInLine(admin.TabularInline):
+    model = PurchaseItem
+    fields = ('medicine', 'quantity', 'unit_price', 'line_total', 'batch_number', 'expiry_date', 'batch',)
+    def get_readonly_fields(self, request, obj=None):
+        if obj is None:
+            return []
+        return ['medicine', 'quantity', 'unit_price', 'line_total', 'batch_number', 'expiry_date', 'batch']
+    extra = 1
+
+@admin.register(Purchase)
+class PurchaseAdmin(admin.ModelAdmin):
+    list_display = ('supplier', 'invoice_number', 'date', 'total_amount')
+    list_filter = ('supplier',)
+    search_fields = ('supplier__name',)
+    def get_readonly_fields(self, request, obj=None):
+        if obj is None:
+            return []
+        return ['supplier', 'user', 'invoice_number', 'date', 'status', 'total_amount']
+    inlines = [PurchaseItemInLine]
+
+@admin.register(PurchaseItem)
+class PurchaseItemAdmin(admin.ModelAdmin):
+    list_display = ('purchase', 'medicine', 'quantity', 'unit_price')
+    def get_readonly_fields(self, request, obj=None):
+        if obj is None:
+            return []
+        return ['purchase', 'medicine', 'quantity', 'unit_price', 'line_total', 'batch_number', 'expiry_date', 'batch']

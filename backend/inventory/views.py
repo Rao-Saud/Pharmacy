@@ -1,14 +1,18 @@
 from django.shortcuts import render
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
-from django.db.models import F, Sum
+from django.db.models import F, Sum, ProtectedError
 from django.db.models.functions import Coalesce
-from .models import Medicine, Batch, Category, Patient, Prescription, PrescriptionItem
-from .serializers import MedicineSerializer, BatchSerializer, CategorySerializer, PatientSerializer, PharmacistReassignSerializer, PrescriptionSerializer, PrescriptionDispensedSerializer
+from .models import Medicine, Batch, Category, Patient, Prescription, PrescriptionItem, Supplier, Purchase
+from .serializers import (MedicineSerializer, BatchSerializer, CategorySerializer, 
+                        PatientSerializer, PharmacistReassignSerializer, PrescriptionSerializer, 
+                        PrescriptionDispensedSerializer, PurchaseSerializer, SupplierSerializer)
 from rest_framework.permissions import IsAuthenticated
 from accounts.permissions import IsPharmacist, IsAdmin
 from rest_framework.generics import UpdateAPIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, mixins, viewsets
+from .services import cancel_purchase, PurchaseError
+from rest_framework.decorators import action
 
 # Create your views here.
 
@@ -29,13 +33,14 @@ class MedicineViewSet(ModelViewSet):
 class BatchViewSet(ModelViewSet):
     queryset = Batch.objects.select_related('medicine__category').all()
     serializer_class = BatchSerializer
+    search_fields = ['medicine__name', 'batch_number']
 
-    def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            permission_classes = [IsAdmin | IsPharmacist]
-        else:
-            permission_classes = [IsAuthenticated]
-        return [permission() for permission in permission_classes]
+    # def get_permissions(self):
+    #     if self.action in ['create', 'update', 'partial_update', 'destroy']:
+    #         permission_classes = [IsAdmin | IsPharmacist]
+    #     else:
+    #         permission_classes = [IsAuthenticated]
+    #     return [permission() for permission in permission_classes]
 
 class CategoryViewSet(ModelViewSet):
     queryset = Category.objects.all()
@@ -139,3 +144,47 @@ class PharmacistReassignView(UpdateAPIView):
     def perform_update(self, serializer):
         # This triggers the custom update method inside your serializer
         serializer.save()
+
+class SupplierViewSet(ModelViewSet):
+    queryset = Supplier.objects.all()
+    serializer_class = SupplierSerializer
+    # permission_classes = [IsAdmin]
+    filterset_fields = ['active']
+    search_fields = ['name']
+
+    def destroy(self, request, *args, **kwargs):
+        supplier = self.get_object()
+        try:
+            supplier.delete()
+        except ProtectedError:
+            return Response(
+                {"error": "This supplier has purchases and cannot be deleted. Mark it as inactive instead."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+class PurchaseViewSet(mixins.CreateModelMixin,
+                      mixins.RetrieveModelMixin,
+                      mixins.ListModelMixin,
+                      viewsets.GenericViewSet):
+    queryset = Purchase.objects.select_related('supplier', 'user').prefetch_related('purchase_items__medicine').all()
+    serializer_class = PurchaseSerializer
+    permission_classes = [IsAdmin | IsPharmacist]
+    ordering_fields = ['created_at']
+    search_fields = ['invoice_number']
+    filterset_fields = ['status']
+
+    def get_queryset(self):
+        return Purchase.objects.select_related('supplier', 'user').prefetch_related('purchase_items__medicine').all()
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        purchase = self.get_object()
+        try:
+            cancel_purchase(purchase=purchase, user=request.user)
+        except PurchaseError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        purchase = self.get_queryset().get(pk=purchase.pk)
+        return Response(self.get_serializer(purchase).data)
+
